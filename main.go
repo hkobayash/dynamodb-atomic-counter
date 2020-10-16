@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"strconv"
 	"sync"
 	"syscall"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 func main() {
@@ -28,24 +25,11 @@ func main() {
 	counter := NewCounter()
 	go counter.Watch(ctx)
 
-	sess := session.Must(session.NewSession())
-	svc := dynamodb.New(sess)
-
-	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String("Counter"),
-		Key: map[string]*dynamodb.AttributeValue{
-			"Name": {
-				S: aws.String("test"),
-			},
-		},
-		UpdateExpression: aws.String("ADD CountValue :incr"),
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":incr": {
-				N: aws.String("1"),
-			},
-		},
-		ReturnValues: aws.String("UPDATED_NEW"),
+	db, err := sql.Open("mysql", os.Args[2])
+	if err != nil {
+		log.Fatalf("sql open err: %#v", err)
 	}
+	defer db.Close()
 
 	var wg sync.WaitGroup
 	wg.Add(int(worker))
@@ -53,14 +37,14 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for {
-				if _, err := svc.UpdateItemWithContext(ctx, input); err != nil {
-					if aerr, ok := err.(awserr.Error); ok && aerr.Code() == request.CanceledErrorCode {
-						return
-					} else {
-						counter.ErrIncrement()
-					}
+				if res, err := db.ExecContext(ctx, "UPDATE sequence SET id=LAST_INSERT_ID(id+1)"); err != nil {
+					return
 				} else {
-					counter.Increment()
+					if _, err := res.LastInsertId(); err != nil {
+						counter.ErrIncrement()
+					} else {
+						counter.Increment()
+					}
 				}
 			}
 		}()
