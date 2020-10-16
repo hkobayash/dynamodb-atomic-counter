@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
@@ -36,7 +38,7 @@ func main() {
 				S: aws.String("test"),
 			},
 		},
-		UpdateExpression: aws.String("ADD Value :incr"),
+		UpdateExpression: aws.String("ADD CountValue :incr"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":incr": {
 				N: aws.String("1"),
@@ -51,11 +53,14 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for {
-				_, err := svc.UpdateItemWithContext(ctx, input)
-				if err == nil {
-					counter.Increment()
+				if _, err := svc.UpdateItemWithContext(ctx, input); err != nil {
+					if aerr, ok := err.(awserr.Error); ok && aerr.Code() == request.CanceledErrorCode {
+						return
+					} else {
+						counter.ErrIncrement()
+					}
 				} else {
-					counter.ErrIncrement()
+					counter.Increment()
 				}
 			}
 		}()
